@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STORMWATCH // TACTICAL COMMAND HUD</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Orbitron:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+
+    <style>
+        /* ===== RESET & TACTICAL THEME ===== */
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-deep: #050911;
+            --bg-panel: #0d1525;
+            --bg-panel-dark: #080e1a;
+            --gunmetal: #1a2535;
+            --gunmetal-border: #2a3a4f;
+            --tactical-green: #00ff9d;
+            --tactical-green-dim: #00cc7d;
+            --tactical-green-glow: rgba(0, 255, 157, 0.25);
+            --tactical-cyan: #00e5ff;
+            --warning-amber: #f97316;
+            --warning-amber-glow: rgba(249, 115, 22, 0.3);
+            --alert-red: #ff2a4b;
+            --alert-red-glow: rgba(255, 42, 75, 0.35);
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #52637a;
+            --text-highlight: #ffffff;
+            --font-hud: 'Orbitron', monospace;
+            --font-mono: 'JetBrains Mono', monospace;
+            --header-height: 52px;
+            --footer-height: 56px;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            -webkit-font-smoothing: antialiased;
+            user-select: none;
+        }
+
+        /* ===== CRT SCANLINE OVERLAY ===== */
+        body::before {
+            content: " ";
+            display: block;
+            position: fixed;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.3) 50%);
+            background-size: 100% 3px;
+            z-index: 9990;
+            pointer-events: none;
+            opacity: 0.6;
+        }
+
+        /* ===== GRID OVERLAY ===== */
+        .hud-grid-overlay {
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(to right, rgba(26, 37, 53, 0.3) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(26, 37, 53, 0.3) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* ===== CORNER BRACKETS ===== */
+        .corner-bracket {
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            border-color: var(--tactical-green);
+            pointer-events: none;
+            z-index: 100;
+        }
+        .cb-tl { top: -2px; left: -2px; border-top: 2px solid var(--tactical-green); border-left: 2px solid var(--tactical-green); }
+        .cb-tr { top: -2px; right: -2px; border-top: 2px solid var(--tactical-green); border-right: 2px solid var(--tactical-green); }
+        .cb-bl { bottom: -2px; left: -2px; border-bottom: 2px solid var(--tactical-green); border-left: 2px solid var(--tactical-green); }
+        .cb-br { bottom: -2px; right: -2px; border-bottom: 2px solid var(--tactical-green); border-right: 2px solid var(--tactical-green); }
+
+        /* ===== LAYOUT ===== */
+        .app-container {
+            display: grid;
+            grid-template-rows: var(--header-height) 1fr var(--footer-height);
+            height: 100vh;
+            width: 100vw;
+            position: relative;
+            background: var(--bg-deep);
+        }
+
+        /* ===== TOP COMMAND BAR ===== */
+        .top-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            background: var(--bg-panel-dark);
+            border-bottom: 2px solid var(--gunmetal-border);
+            position: relative;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+        }
+
+        .top-nav::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 180px;
+            height: 2px;
+            background: var(--tactical-green);
+            box-shadow: 0 0 10px var(--tactical-green);
+        }
+
+        .nav-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-symbol {
+            width: 32px;
+            height: 32px;
+            background: var(--bg-panel);
+            border: 2px solid var(--tactical-green);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--tactical-green);
+            box-shadow: 0 0 8px var(--tactical-green-glow), inset 0 0 6px var(--tactical-green-glow);
+        }
+
+        .logo-text-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .logo-title {
+            font-family: var(--font-hud);
+            font-size: 1.05rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: var(--text-highlight);
+            text-transform: uppercase;
+        }
+
+        .logo-title span {
+            color: var(--tactical-green);
+            text-shadow: 0 0 6px var(--tactical-green-glow);
+        }
+
+        .logo-sub {
+            font-size: 0.62rem;
+            color: var(--text-secondary);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .defcon-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            background: #1f0b0f;
+            border: 2px solid var(--alert-red);
+            box-shadow: 0 0 8px var(--alert-red-glow);
+        }
+
+        .defcon-code {
+            font-family: var(--font-hud);
+            font-size: 0.72rem;
+            font-weight: 800;
+            color: var(--alert-red);
+            letter-spacing: 1px;
+        }
+
+        .defcon-blink {
+            width: 8px;
+            height: 8px;
+            background: var(--alert-red);
+            animation: tacticalBlink 1s infinite alternate;
+        }
+
+        @keyframes tacticalBlink {
+            0% { opacity: 0.2; transform: scale(0.9); }
+            100% { opacity: 1; transform: scale(1.1); box-shadow: 0 0 8px var(--alert-red); }
+        }
+
+        .telemetry-status {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            border-left: 1px solid var(--gunmetal-border);
+            padding-left: 16px;
+        }
+
+        .telemetry-item strong {
+            color: var(--tactical-green);
+            font-family: var(--font-hud);
+        }
+
+        .nav-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* ===== HUD BUTTONS ===== */
+        .hud-btn {
+            background: var(--bg-panel);
+            border: 1px solid var(--gunmetal-border);
+            color: var(--text-secondary);
+            font-family: var(--font-hud);
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 8px 14px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 3px 3px 0px #000;
+            transition: all 0.15s ease;
+        }
+
+        .hud-btn:hover {
+            background: var(--gunmetal);
+            color: var(--tactical-green);
+            border-color: var(--tactical-green);
+            box-shadow: 0 0 10px var(--tactical-green-glow), 3px 3px 0px #000;
+        }
+
+        .hud-btn.active {
+            background: #0f2723;
+            color: var(--tactical-green);
+            border: 1px solid var(--tactical-green);
+            box-shadow: inset 0 0 8px var(--tactical-green-glow), 2px 2px 0px #000;
+        }
+
+        .hud-btn-danger {
+            border-color: var(--warning-amber);
+            color: var(--warning-amber);
+        }
+
+        .hud-btn-danger:hover {
+            border-color: var(--alert-red);
+            color: var(--alert-red);
+            background: #230b10;
+            box-shadow: 0 0 10px var(--alert-red-glow);
+        }
+
+        /* ===== MAP AREA ===== */
+        .map-area {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #050a12;
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            background: var(--bg-deep);
+            transition: opacity 0.6s ease;
+        }
+
+
+
+        /* ===== HUD CROSSHAIR ===== */
+        .hud-crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90px;
+            height: 90px;
+            border: 1px dashed rgba(0, 255, 157, 0.25);
+            pointer-events: none;
+            z-index: 400;
+        }
+
+        .hud-crosshair::before, .hud-crosshair::after {
+            content: '';
+            position: absolute;
+            background: var(--tactical-green);
+            opacity: 0.4;
+        }
+        .hud-crosshair::before { top: 44px; left: -10px; width: 110px; height: 1px; }
+        .hud-crosshair::after { top: -10px; left: 44px; width: 1px; height: 110px; }
+
+        /* ===== HUD COORDS BOX ===== */
+        .hud-globe-coords {
+            position: absolute;
+            top: calc(50% + 56px);
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.6rem;
+            color: var(--tactical-green);
+            background: rgba(8, 14, 26, 0.85);
+            border: 1px solid var(--gunmetal-border);
+            padding: 3px 10px;
+            font-family: var(--font-mono);
+            letter-spacing: 1px;
+            pointer-events: none;
+            z-index: 400;
+            text-transform: uppercase;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* ===== TACTICAL PANELS ===== */
+        .tactical-panel {
+            background: var(--bg-panel);
+            border: 2px solid var(--gunmetal-border);
+            box-shadow: 6px 6px 0px rgba(0, 0, 0, 0.95), 0 0 15px rgba(0, 0, 0, 0.8);
+            position: relative;
+            z-index: 500;
+        }
+
+        .tactical-panel-inner {
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 14px;
+            position: relative;
+        }
+
+        .panel-header-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+            border-bottom: 2px solid var(--gunmetal-border);
+            position: relative;
+        }
+
+        .panel-header-bar::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 45px;
+            height: 2px;
+            background: var(--tactical-green);
+        }
+
+        .panel-tag {
+            font-family: var(--font-hud);
+            font-size: 0.65rem;
+            font-weight: 800;
+            letter-spacing: 1.5px;
+            color: var(--tactical-green);
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .panel-serial {
+            font-size: 0.6rem;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+
+        /* ===== TARGET INTEL PANEL (LEFT) ===== */
+        .target-intel-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 320px;
+        }
+
+        .storm-designator {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .storm-code {
+            font-family: var(--font-hud);
+            font-size: 1.25rem;
+            font-weight: 900;
+            color: var(--text-highlight);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .threat-level-badge {
+            background: #29080d;
+            border: 2px solid var(--alert-red);
+            color: var(--alert-red);
+            font-family: var(--font-hud);
+            font-size: 0.68rem;
+            font-weight: 800;
+            padding: 3px 8px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            box-shadow: 0 0 8px var(--alert-red-glow);
+        }
+
+        .threat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .hud-metric-box {
+            background: var(--bg-panel-dark);
+            border: 1px solid var(--gunmetal-border);
+            padding: 8px 10px;
+            position: relative;
+        }
+
+        .hud-metric-box::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 3px;
+            height: 100%;
+            background: var(--gunmetal-border);
+        }
+
+        .hud-metric-box.active-green::before {
+            background: var(--tactical-green);
+            box-shadow: 0 0 6px var(--tactical-green);
+        }
+
+        .hud-metric-box.active-amber::before {
+            background: var(--warning-amber);
+            box-shadow: 0 0 6px var(--warning-amber);
+        }
+
+        .metric-key {
+            font-size: 0.58rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            font-weight: 700;
+            letter-spacing: 1px;
+            margin-bottom: 2px;
+        }
+
+        .metric-val {
+            font-family: var(--font-hud);
+            font-size: 1.3rem;
+            font-weight: 800;
+            color: var(--text-highlight);
+            line-height: 1.1;
+        }
+
+        .metric-unit {
+            font-size: 0.65rem;
+            color: var(--tactical-green);
+            font-family: var(--font-mono);
+            margin-left: 2px;
+        }
+
+        /* ===== STATUS TERMINAL ===== */
+        .status-terminal {
+            background: #060c17;
+            border: 1px solid var(--gunmetal-border);
+            padding: 8px 10px;
+            font-size: 0.68rem;
+            line-height: 1.4;
+            color: var(--text-secondary);
+        }
+
+        .status-terminal-line {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            border-bottom: 1px dashed rgba(26, 37, 53, 0.8);
+        }
+
+        .status-terminal-line:last-child {
+            border-bottom: none;
+        }
+
+        .stl-key {
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        .stl-val {
+            color: var(--tactical-cyan);
+            font-weight: 600;
+        }
+
+        /* ===== LAYERS PANEL (RIGHT) ===== */
+        .tactical-layers-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 250px;
+        }
+
+        .tactical-layer-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            background: var(--bg-panel-dark);
+            border: 1px solid var(--gunmetal-border);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .tactical-layer-toggle:hover {
+            border-color: var(--tactical-green);
+            background: #0f1c2d;
+        }
+
+        .tactical-layer-toggle.active {
+            border-color: var(--tactical-green);
+            box-shadow: inset 0 0 8px rgba(0, 255, 157, 0.15);
+        }
+
+        .layer-meta {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .layer-sigil {
+            width: 18px;
+            height: 18px;
+            border: 1px solid var(--gunmetal-border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.6rem;
+            font-weight: 800;
+            color: var(--text-muted);
+        }
+
+        .tactical-layer-toggle.active .layer-sigil {
+            border-color: var(--tactical-green);
+            color: var(--tactical-green);
+            background: rgba(0, 255, 157, 0.1);
+        }
+
+        .layer-name {
+            font-family: var(--font-hud);
+            font-size: 0.68rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-primary);
+        }
+
+        .layer-flag {
+            font-size: 0.6rem;
+            font-weight: 700;
+            font-family: var(--font-hud);
+            padding: 2px 6px;
+            background: #141c29;
+            color: var(--text-muted);
+            border: 1px solid var(--gunmetal-border);
+        }
+
+        .tactical-layer-toggle.active .layer-flag {
+            background: rgba(0, 255, 157, 0.15);
+            border-color: var(--tactical-green);
+            color: var(--tactical-green);
+        }
+
+        /* ===== ZOOM CONTROLS ===== */
+        .tactical-zoom-cluster {
+            position: absolute;
+            right: 20px;
+            top: 290px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 500;
+            width: 175px;
+        }
+
+        .zoom-hud-display {
+            background: var(--bg-panel-dark);
+            border: 1px solid var(--gunmetal-border);
+            border-left: 2px solid var(--tactical-cyan);
+            padding: 8px 10px;
+            box-shadow: 4px 4px 0px #000;
+            margin-bottom: 2px;
+        }
+
+        .zoom-telemetry-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.62rem;
+            line-height: 1.4;
+        }
+
+        .zoom-telemetry-label {
+            color: var(--text-muted);
+            font-weight: 700;
+        }
+
+        .zoom-telemetry-val {
+            font-family: var(--font-hud);
+            font-weight: 800;
+            color: var(--tactical-green);
+        }
+
+        .zoom-slider-track {
+            height: 3px;
+            background: #0c1626;
+            margin: 6px 0 2px 0;
+            position: relative;
+            border: 1px solid var(--gunmetal-border);
+        }
+
+        .zoom-slider-fill {
+            height: 100%;
+            background: var(--tactical-green);
+            box-shadow: 0 0 6px var(--tactical-green);
+            width: 50%;
+            transition: width 0.1s linear;
+        }
+
+        .zoom-btn-row {
+            display: flex;
+            gap: 4px;
+        }
+
+        .zoom-hud-btn {
+            background: var(--bg-panel);
+            border: 1px solid var(--gunmetal-border);
+            color: var(--text-primary);
+            font-family: var(--font-hud);
+            font-size: 0.68rem;
+            font-weight: 800;
+            letter-spacing: 1px;
+            padding: 7px 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            box-shadow: 3px 3px 0px #000;
+            transition: all 0.15s ease;
+            flex: 1;
+            text-transform: uppercase;
+        }
+
+        .zoom-hud-btn:hover {
+            border-color: var(--tactical-green);
+            color: var(--tactical-green);
+            background: #0f1f2e;
+            box-shadow: 0 0 8px var(--tactical-green-glow), 3px 3px 0px #000;
+        }
+
+        /* ===== LOCATION QUICK SELECT ===== */
+        .location-quick-select {
+            background: var(--bg-panel-dark);
+            border: 1px solid var(--gunmetal-border);
+            padding: 6px;
+            margin-top: 4px;
+            box-shadow: 4px 4px 0px #000;
+        }
+
+        .quick-select-header {
+            font-size: 0.55rem;
+            font-family: var(--font-hud);
+            color: var(--text-muted);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+            padding-left: 2px;
+        }
+
+        .loc-chip-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+        }
+
+        .loc-chip-btn {
+            background: #0e1726;
+            border: 1px solid var(--gunmetal-border);
+            color: var(--text-secondary);
+            font-size: 0.58rem;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            padding: 4px 6px;
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .loc-chip-btn:hover {
+            color: var(--tactical-green);
+            border-color: var(--tactical-green);
+            background: rgba(0, 255, 157, 0.08);
+        }
+
+        .loc-chip-btn.highlight {
+            border-color: var(--alert-red);
+            color: #ff8597;
+            background: rgba(255, 42, 75, 0.1);
+        }
+
+        /* ===== BOTTOM LEFT CONTROLS ===== */
+        .bottom-left-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            gap: 8px;
+            z-index: 500;
+        }
+
+        .hud-icon-btn {
+            width: 44px;
+            height: 44px;
+            background: var(--bg-panel);
+            border: 2px solid var(--gunmetal-border);
+            color: var(--text-secondary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            cursor: pointer;
+            box-shadow: 4px 4px 0px #000;
+            transition: all 0.15s ease;
+        }
+
+        .hud-icon-btn span {
+            font-size: 0.48rem;
+            font-family: var(--font-hud);
+            text-transform: uppercase;
+            font-weight: 800;
+        }
+
+        .hud-icon-btn:hover, .hud-icon-btn.active {
+            border-color: var(--tactical-green);
+            color: var(--tactical-green);
+            box-shadow: 0 0 12px var(--tactical-green-glow), 4px 4px 0px #000;
+            background: var(--bg-panel-dark);
+        }
+
+        /* ===== AI ANALYSIS ===== */
+        .ai-tactical-trigger {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            z-index: 500;
+        }
+
+        .btn-neural-run {
+            background: var(--bg-panel);
+            border: 2px solid var(--tactical-green);
+            color: var(--tactical-green);
+            font-family: var(--font-hud);
+            font-weight: 800;
+            font-size: 0.8rem;
+            letter-spacing: 2px;
+            padding: 12px 24px;
+            cursor: pointer;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 0 15px var(--tactical-green-glow), 4px 4px 0px #000;
+            transition: all 0.2s ease;
+        }
+
+        .btn-neural-run:hover {
+            background: var(--tactical-green);
+            color: var(--bg-deep);
+            box-shadow: 0 0 25px var(--tactical-green), 4px 4px 0px #000;
+        }
+
+        .ai-terminal-panel {
+            position: absolute;
+            bottom: 80px;
+            right: 20px;
+            width: 440px;
+            max-height: 520px;
+            z-index: 600;
+            display: none;
+            overflow-y: auto;
+        }
+
+        .ai-terminal-panel.open {
+            display: block;
+            animation: tacticalSlide 0.2s cubic-bezier(0, 0, 0.2, 1);
+        }
+
+        @keyframes tacticalSlide {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .intel-stream {
+            font-size: 0.75rem;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            margin-bottom: 14px;
+            background: #070d17;
+            border-left: 2px solid var(--tactical-green);
+            padding: 10px 12px;
+        }
+
+        .intel-stream strong {
+            color: var(--text-highlight);
+            font-family: var(--font-hud);
+        }
+
+        .intel-action-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 8px 10px;
+            background: var(--bg-panel-dark);
+            border: 1px solid var(--gunmetal-border);
+            margin-bottom: 8px;
+            font-size: 0.72rem;
+        }
+
+        .intel-action-item::before {
+            content: ">>";
+            color: var(--tactical-green);
+            font-family: var(--font-hud);
+            font-weight: 800;
+        }
+
+        .btn-execute-directive {
+            width: 100%;
+            background: #1c150b;
+            border: 2px solid var(--warning-amber);
+            color: var(--warning-amber);
+            font-family: var(--font-hud);
+            font-size: 0.78rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            padding: 12px;
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--warning-amber-glow), 3px 3px 0px #000;
+            margin-top: 10px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-execute-directive:hover {
+            background: var(--warning-amber);
+            color: #000;
+            box-shadow: 0 0 20px var(--warning-amber);
+        }
+
+        /* ===== BOTTOM TELEMETRY STRIP ===== */
+        .bottom-hud-strip {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            background: var(--bg-panel-dark);
+            border-top: 2px solid var(--gunmetal-border);
+            z-index: 1000;
+            position: relative;
+        }
+
+        .strip-cell {
+            padding: 8px 16px;
+            border-right: 1px solid var(--gunmetal-border);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            position: relative;
+        }
+
+        .strip-cell:last-child {
+            border-right: none;
+        }
+
+        .strip-label {
+            font-size: 0.55rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-muted);
+            margin-bottom: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .strip-value {
+            font-family: var(--font-hud);
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: var(--text-highlight);
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+        }
+
+        .strip-unit {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            color: var(--tactical-green);
+        }
+
+        /* ===== LOADING OVERLAY ===== */
+        .tactical-loading {
+            position: fixed;
+            inset: 0;
+            background: #04070d;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 99999;
+            transition: opacity 0.4s ease;
+        }
+
+        .tactical-loading.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .hud-radar-scanner {
+            width: 70px;
+            height: 70px;
+            border: 2px solid var(--tactical-green);
+            position: relative;
+            box-shadow: 0 0 20px var(--tactical-green-glow);
+        }
+
+        .hud-radar-scanner::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border: 1px dashed rgba(0, 255, 157, 0.4);
+            animation: spinRadar 3s linear infinite;
+        }
+
+        @keyframes spinRadar {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-title {
+            margin-top: 24px;
+            font-family: var(--font-hud);
+            font-size: 0.9rem;
+            letter-spacing: 4px;
+            color: var(--tactical-green);
+            text-transform: uppercase;
+        }
+
+        .loading-sub {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            letter-spacing: 2px;
+            margin-top: 6px;
+        }
+
+        /* ===== LEAFLET POPUP ===== */
+        .leaflet-popup-content-wrapper {
+            background: var(--bg-panel);
+            color: var(--text-primary);
+            border-radius: 4px;
+            border: 1px solid var(--gunmetal-border);
+            box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.9);
+        }
+
+        .leaflet-popup-tip {
+            background: var(--bg-panel);
+            border: 1px solid var(--gunmetal-border);
+        }
+
+        .leaflet-popup-content {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            line-height: 1.5;
+        }
+
+        /* ===== SCROLLBAR ===== */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--gunmetal-border);
+            border-radius: 2px;
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 1024px) {
+            .target-intel-panel { width: 280px; }
+            .tactical-layers-panel { width: 220px; }
+            .ai-terminal-panel { width: 380px; }
+            .telemetry-status { display: none; }
+        }
+
+        @media (max-width: 768px) {
+            .target-intel-panel {
+                top: 12px;
+                left: 12px;
+                right: 12px;
+                width: auto;
+            }
+            .tactical-layers-panel { display: none; }
+            .tactical-zoom-cluster { display: none; }
+            .ai-terminal-panel {
+                left: 12px;
+                right: 12px;
+                width: auto;
+            }
+            .bottom-hud-strip {
+                grid-template-columns: repeat(3, 1fr);
+            }
+            .strip-cell {
+                padding: 6px 12px;
+            }
+            .strip-cell:nth-child(3n) {
+                border-right: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Overlay -->
+    <div class="tactical-loading" id="loadingOverlay">
+        <div class="corner-bracket cb-tl"></div>
+        <div class="corner-bracket cb-tr"></div>
+        <div class="corner-bracket cb-bl"></div>
+        <div class="corner-bracket cb-br"></div>
+        <div class="hud-radar-scanner"></div>
+        <div class="loading-title">STORM-CMD // HUD CALIBRATION</div>
+        <div class="loading-sub">SYNCHRONIZING TACTICAL RECONNAISSANCE TELEMETRY</div>
+    </div>
+
+    <!-- Grid Overlay -->
+    <div class="hud-grid-overlay"></div>
+
+    <div class="app-container">
+        <!-- ===== TOP COMMAND BAR ===== -->
+        <header class="top-nav">
+            <div class="nav-left">
+                <div class="logo">
+                    <div class="logo-symbol">🌀</div>
+                    <div class="logo-text-group">
+                        <div class="logo-title">STORMWATCH // <span>OPS-CMD</span></div>
+                        <div class="logo-sub">GLOBAL THREAT INTERCEPTION MATRIX</div>
+                    </div>
+                </div>
+                <div class="defcon-pill">
+                    <div class="defcon-blink"></div>
+                    <span class="defcon-code">DEFCON 2 : HIGH ALERT</span>
+                </div>
+                <div class="telemetry-status">
+                    <div class="telemetry-item">UPLINK: <strong>SAT-GEO-09</strong></div>
+                    <div class="telemetry-item">FREQ: <strong>14.28 GHz</strong></div>
+                    <div class="telemetry-item">CYCLE: <strong id="cycleTimer">T+04:12:09</strong></div>
+                </div>
+            </div>
+            <div class="nav-right">
+                <button class="hud-btn active" onclick="switchStormTarget()">
+                    <span>TARGET: <span id="navStormName">KATRINA</span></span>
+                </button>
+                <button class="hud-btn" onclick="toggleSearchPanel()">
+                    <span>SEARCH</span>
+                </button>
+                <button class="hud-btn" onclick="cycleReconSweep()">
+                    <span>RECON SWEEP</span>
+                </button>
+                <button class="hud-btn hud-btn-danger" onclick="triggerAlertBroadcast()">
+                    <span>BROADCAST EVAC</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- ===== MAP AREA ===== -->
+        <main class="map-area">
+            <div id="map"></div>
+
+
+            <!-- HUD Crosshair -->
+            <div class="hud-crosshair"></div>
+
+            <!-- HUD Coords -->
+            <div class="hud-globe-coords">
+                <span id="hudCoords">LOC: 28.80°N // 89.40°W</span>
+                <span style="color: var(--gunmetal-border);">|</span>
+                <span id="hudSector">SECTOR: NEW ORLEANS</span>
+            </div>
+
+            <!-- Corner Reticles -->
+            <div class="corner-bracket cb-tl" style="top: 12px; left: 12px;"></div>
+            <div class="corner-bracket cb-tr" style="top: 12px; right: 12px;"></div>
+            <div class="corner-bracket cb-bl" style="bottom: 12px; left: 12px;"></div>
+            <div class="corner-bracket cb-br" style="bottom: 12px; right: 12px;"></div>
+
+            <!-- STORM TARGET DATA PANEL (TOP LEFT) -->
+            <div class="tactical-panel target-intel-panel">
+                <div class="corner-bracket cb-tl"></div>
+                <div class="corner-bracket cb-tr"></div>
+                <div class="corner-bracket cb-bl"></div>
+                <div class="corner-bracket cb-br"></div>
+                <div class="tactical-panel-inner">
+                    <div class="panel-header-bar">
+                        <div class="panel-tag">PRIMARY THREAT PROFILE</div>
+                        <div class="panel-serial" id="panelSerial">ID: STM-05K-NOR</div>
+                    </div>
+                    <div class="storm-designator">
+                        <div class="storm-code" id="hudStormName">HURRICANE KATRINA</div>
+                        <div class="threat-level-badge" id="hudThreatCat">CAT 5 CRITICAL</div>
+                    </div>
+                    <div class="threat-grid">
+                        <div class="hud-metric-box active-amber">
+                            <div class="metric-key">MAX SUSTAINED WIND</div>
+                            <div class="metric-val" id="metricWind">175<span class="metric-unit">MPH</span></div>
+                        </div>
+                        <div class="hud-metric-box active-green">
+                            <div class="metric-key">CENTRAL PRESSURE</div>
+                            <div class="metric-val" id="metricPressure">902<span class="metric-unit">hPa</span></div>
+                        </div>
+                        <div class="hud-metric-box">
+                            <div class="metric-key">TRACK VELOCITY</div>
+                            <div class="metric-val" id="metricSpeed">15<span class="metric-unit">KTS</span></div>
+                        </div>
+                        <div class="hud-metric-box">
+                            <div class="metric-key">VORTEX VECTOR</div>
+                            <div class="metric-val" id="metricDirection">042° NE</div>
+                        </div>
+                    </div>
+                    <div class="status-terminal">
+                        <div class="status-terminal-line">
+                            <span class="stl-key">SURGE POTENTIAL:</span>
+                            <span class="stl-val" style="color: var(--alert-red);">28.4 FT [EXTREME]</span>
+                        </div>
+                        <div class="status-terminal-line">
+                            <span class="stl-key">EST. IMPACT ZERO:</span>
+                            <span class="stl-val" id="impactTimer">T-MINUS 06:45:00</span>
+                        </div>
+                        <div class="status-terminal-line">
+                            <span class="stl-key">GRID DISRUPTION:</span>
+                            <span class="stl-val" style="color: var(--warning-amber);">88% REGIONAL FAULT</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- STORM SEARCH PANEL (TOP RIGHT) -->
+            <div class="tactical-panel" id="searchPanel" style="position:absolute;top:20px;right:290px;width:300px;z-index:600;display:none;">
+                <div class="corner-bracket cb-tl"></div>
+                <div class="corner-bracket cb-tr"></div>
+                <div class="corner-bracket cb-bl"></div>
+                <div class="corner-bracket cb-br"></div>
+                <div class="tactical-panel-inner">
+                    <div class="panel-header-bar">
+                        <div class="panel-tag">STORM SEARCH</div>
+                        <button class="hud-btn" onclick="toggleSearchPanel()" style="padding:2px 8px;font-size:0.6rem;">CLOSE [X]</button>
+                    </div>
+                    <input type="text" id="stormSearchInput" placeholder="Search storms by name, year, region..." 
+                           style="width:100%;background:var(--bg-panel-dark);border:1px solid var(--gunmetal-border);color:var(--text-primary);padding:8px 10px;font-family:var(--font-mono);font-size:0.75rem;margin-bottom:8px;box-sizing:border-box;"
+                           oninput="handleSearch(this.value)">
+                    <div id="searchResults" style="max-height:300px;overflow-y:auto;"></div>
+                </div>
+            </div>
+
+            <!-- TACTICAL LAYER TOGGLES (TOP RIGHT) -->
+            <div class="tactical-panel tactical-layers-panel">
+                <div class="corner-bracket cb-tl"></div>
+                <div class="corner-bracket cb-tr"></div>
+                <div class="corner-bracket cb-bl"></div>
+                <div class="corner-bracket cb-br"></div>
+                <div class="tactical-panel-inner">
+                    <div class="panel-header-bar">
+                        <div class="panel-tag">HUD OVERLAY FILTER</div>
+                        <div class="panel-serial">RECON-LYR</div>
+                    </div>
+                    <div class="tactical-layer-toggle active" id="lyr-track" onclick="toggleTacticalLayer('track')">
+                        <div class="layer-meta">
+                            <div class="layer-sigil">01</div>
+                            <span class="layer-name">VECTOR TRAJECTORY</span>
+                        </div>
+                        <span class="layer-flag">ACTIVE</span>
+                    </div>
+                    <div class="tactical-layer-toggle active" id="lyr-zones" onclick="toggleTacticalLayer('zones')">
+                        <div class="layer-meta">
+                            <div class="layer-sigil">02</div>
+                            <span class="layer-name">SURGE RISK CONE</span>
+                        </div>
+                        <span class="layer-flag">ACTIVE</span>
+                    </div>
+                    <div class="tactical-layer-toggle active" id="lyr-infra" onclick="toggleTacticalLayer('infra')">
+                        <div class="layer-meta">
+                            <div class="layer-sigil">03</div>
+                            <span class="layer-name">DEFENSE & INFRA</span>
+                        </div>
+                        <span class="layer-flag">ACTIVE</span>
+                    </div>
+                    <div class="tactical-layer-toggle active" id="lyr-labels" onclick="toggleTacticalLayer('labels')">
+                        <div class="layer-meta">
+                            <div class="layer-sigil">04</div>
+                            <span class="layer-name">LOCATION MATRIX</span>
+                        </div>
+                        <span class="layer-flag">ACTIVE</span>
+                    </div>
+                    <div class="tactical-layer-toggle" id="lyr-grid" onclick="toggleTacticalLayer('grid')">
+                        <div class="layer-meta">
+                            <div class="layer-sigil">05</div>
+                            <span class="layer-name">ENERGY SUBSTATIONS</span>
+                        </div>
+                        <span class="layer-flag">OFFLINE</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ZOOM CONTROLS -->
+            <div class="tactical-zoom-cluster">
+                <div class="zoom-hud-display">
+                    <div class="zoom-telemetry-row">
+                        <span class="zoom-telemetry-label">OPTIC MAG:</span>
+                        <span class="zoom-telemetry-val" id="hudMagVal">2.4X</span>
+                    </div>
+                    <div class="zoom-telemetry-row">
+                        <span class="zoom-telemetry-label">ALT RANGE:</span>
+                        <span class="zoom-telemetry-val" id="hudRangeVal">210 KM</span>
+                    </div>
+                    <div class="zoom-slider-track">
+                        <div class="zoom-slider-fill" id="zoomProgressBar"></div>
+                    </div>
+                </div>
+                <div class="zoom-btn-row">
+                    <button class="zoom-hud-btn" onclick="triggerZoomIn()">ZOOM +</button>
+                    <button class="zoom-hud-btn" onclick="triggerZoomOut()">ZOOM −</button>
+                </div>
+                <div class="zoom-btn-row">
+                    <button class="zoom-hud-btn" style="border-color: var(--alert-red); color: #ff5c77;" onclick="focusLocation('NEW ORLEANS')">IMPACT ZERO</button>
+                    <button class="zoom-hud-btn" onclick="resetTacticalView()">RESET</button>
+                </div>
+                <!-- Quick Location Select -->
+                <div class="location-quick-select">
+                    <div class="quick-select-header">FOCUS TARGET LOCATIONS</div>
+                    <div class="loc-chip-grid">
+                        <button class="loc-chip-btn highlight" onclick="focusLocation('NEW ORLEANS')">NEW ORLEANS</button>
+                        <button class="loc-chip-btn" onclick="focusLocation('GULFPORT')">GULFPORT</button>
+                        <button class="loc-chip-btn" onclick="focusLocation('MOBILE')">MOBILE</button>
+                        <button class="loc-chip-btn" onclick="focusLocation('HOUSTON')">HOUSTON</button>
+                        <button class="loc-chip-btn" onclick="focusLocation('MIAMI')">MIAMI</button>
+                        <button class="loc-chip-btn" onclick="focusLocation('HAVANA')">HAVANA</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BOTTOM LEFT MAP TOOLS -->
+            <div class="bottom-left-controls">
+                <button class="hud-icon-btn active" id="btnModeRecon" onclick="setMapViewMode('recon')">
+                    <span>VEC</span>
+                </button>
+                <button class="hud-icon-btn" id="btnModeThermal" onclick="setMapViewMode('thermal')">
+                    <span>IR</span>
+                </button>
+                <button class="hud-icon-btn" id="btnModeDoppler" onclick="setMapViewMode('doppler')">
+                    <span>DOP</span>
+                </button>
+                <button class="hud-icon-btn" onclick="toggleGridLock()">
+                    <span>LOCK</span>
+                </button>
+                <button class="hud-icon-btn" id="btnSimulate" onclick="toggleSimulation()">
+                    <span>SIM</span>
+                </button>
+            </div>
+
+            <!-- AI ANALYSIS TRIGGER -->
+            <div class="ai-tactical-trigger">
+                <button class="btn-neural-run" onclick="toggleNeuralDirectivePanel()">
+                    <span>AI DIRECTIVE MATRIX</span>
+                </button>
+            </div>
+
+            <!-- AI DIRECTIVES PANEL -->
+            <div class="tactical-panel ai-terminal-panel" id="aiDirectiveTerminal">
+                <div class="corner-bracket cb-tl"></div>
+                <div class="corner-bracket cb-tr"></div>
+                <div class="corner-bracket cb-bl"></div>
+                <div class="corner-bracket cb-br"></div>
+                <div class="tactical-panel-inner">
+                    <div class="panel-header-bar">
+                        <div class="panel-tag" style="color: var(--tactical-cyan);">NEURAL TACTICAL EVALUATION</div>
+                        <button class="hud-btn" onclick="toggleNeuralDirectivePanel()" style="padding: 2px 8px; font-size: 0.6rem;">CLOSE [X]</button>
+                    </div>
+                    <div class="intel-stream" id="aiIntelStream">
+                        <strong>ASSESSMENT REPORT:</strong> Analyzing storm data...
+                    </div>
+                    <div style="font-family: var(--font-hud); font-size: 0.65rem; color: var(--tactical-green); margin-bottom: 8px; text-transform: uppercase;">
+                        MANDATORY COMBAT / RELIEF DIRECTIVES:
+                    </div>
+                    <div id="aiDirectives"></div>
+                    <button class="btn-execute-directive" onclick="executeDirectives()">
+                        TRANSMIT DIRECTIVES TO DEFENSE NET [AUTHORIZE]
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <!-- ===== BOTTOM TELEMETRY STRIP ===== -->
+        <footer class="bottom-hud-strip">
+            <div class="strip-cell">
+                <div class="strip-label">
+                    <span>SUSTAINED VELOCITY</span>
+                    <span style="color: var(--warning-amber);">GUST 215</span>
+                </div>
+                <div class="strip-value" id="hudWindVal">175 <span class="strip-unit">MPH</span></div>
+            </div>
+            <div class="strip-cell">
+                <div class="strip-label">
+                    <span>CORE BAROMETRIC</span>
+                    <span style="color: var(--tactical-green);">FALLING</span>
+                </div>
+                <div class="strip-value" id="hudPressVal">902 <span class="strip-unit">HPA</span></div>
+            </div>
+            <div class="strip-cell">
+                <div class="strip-label">
+                    <span>HYDRO PRECIP RHO</span>
+                    <span style="color: var(--tactical-cyan);">HEAVY</span>
+                </div>
+                <div class="strip-value" id="hudRainVal">480 <span class="strip-unit">MM/24H</span></div>
+            </div>
+            <div class="strip-cell">
+                <div class="strip-label">
+                    <span>EXPOSED BIOMASS</span>
+                    <span style="color: var(--alert-red);">SECTOR CRITICAL</span>
+                </div>
+                <div class="strip-value" id="hudPopVal" style="color: #ff5c77;">1,420,000</div>
+            </div>
+            <div class="strip-cell">
+                <div class="strip-label">
+                    <span>EVAC QUOTA STATUS</span>
+                    <span style="color: var(--tactical-green);">IN PROGRESS</span>
+                </div>
+                <div class="strip-value" id="hudEvacVal">78.4 <span class="strip-unit">%</span></div>
+            </div>
+            <div class="strip-cell" style="background: rgba(0, 255, 157, 0.04);">
+                <div class="strip-label">
+                    <span>DEFCON READINESS</span>
+                    <span style="color: var(--tactical-green);">SECURE</span>
+                </div>
+                <div class="strip-value" style="color: var(--tactical-green);">LEVEL 2</div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- Application Scripts -->
+
+    <script src="data.js"></script>
+    <script src="calculation.js"></script>
+    <script src="reasoning.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
